@@ -32,18 +32,22 @@ A fonte, as principais características e o motivo da escolha do dataset estão 
 │   └── eda.ipynb                        # análise exploratória completa
 ├── fastapi/
 │   ├── main.py                          # ponto de entrada da aplicação
+│   ├── database.py                      # engine SQLModel e sessão (get_session)
+│   ├── database.db                      # banco SQLite (usuários e predictions)
+│   ├── sqlite_database.py               # criação e população inicial do banco (sqlite3)
 │   ├── requirements.txt                 # dependências da API
 │   ├── .env.example                     # modelo de variáveis de ambiente
 │   ├── Dockerfile                       # imagem da API
 │   ├── compose.yml                      # orquestração via Docker Compose
 │   ├── models/
-│   │   └── schemas.py                   # modelos Pydantic (request/response)
+│   │   ├── schemas.py                   # modelos Pydantic (request/response)
+│   │   └── tables.py                    # tabelas SQLModel (User, Prediction)
 │   ├── routes/
 │   │   ├── health.py                    # GET /health
 │   │   ├── auth.py                      # POST /auth/token
-│   │   └── predict.py                   # POST /predict (protegida)
+│   │   └── predict.py                   # POST /predict, GET /predict e GET /predict/{id} (protegidas)
 │   └── security/
-│       └── auth.py                      # JWT, OAuth2PasswordBearer, usuário admin
+│       └── auth.py                      # JWT, OAuth2PasswordBearer, autenticação via banco
 ├── others/
 │   ├── dfd.png                          # diagrama de fluxo de dados
 │   └── dfd.dot                          # fonte do diagrama (Graphviz)
@@ -134,10 +138,14 @@ A API sobe em `http://localhost:8000`.
 
 ## Autenticação
 
-A API tem um único usuário, definido em código-fonte (`fastapi/security/auth.py`), com senha armazenada como hash (`bcrypt`):
+Os usuários ficam na tabela `user` do SQLite (`fastapi/database.db`), com senha armazenada como hash (`bcrypt`). O banco é criado e populado por `fastapi/sqlite_database.py` (`python sqlite_database.py`, a partir de `fastapi/`; recria o arquivo do zero) com dois usuários:
 
-- **usuário:** `admin`
-- **senha:** `admin123`
+| usuário | senha |
+|---|---|
+| `admin` | `admin123` |
+| `alice` | `alice123` |
+
+Cada predição salva na tabela `prediction` possui um `owner_id` (chave estrangeira para `user.id`). Todas as consultas da API usam SQLModel, sem SQL raw.
 
 Fluxo:
 
@@ -149,15 +157,18 @@ Fluxo:
 | Método | Rota | Autenticação | Descrição |
 |---|---|---|---|
 | GET | `/health` | Não | Verifica se a API está ativa |
-| POST | `/auth/token` | Não | Autentica o usuário admin e retorna um JWT |
-| POST | `/predict` | Sim (Bearer JWT) | Recebe o texto de um chamado e retorna uma intenção classificada (regra fixa; modelo de ML será implementado em etapa futura) |
+| POST | `/auth/token` | Não | Autentica um usuário do banco e retorna um JWT |
+| POST | `/predict` | Sim (Bearer JWT) | Recebe o texto de um chamado e retorna uma intenção classificada (regra fixa; modelo de ML será implementado em etapa futura) e salva a predição para o usuário autenticado |
+| GET | `/predict` | Sim (Bearer JWT) | Lista somente as predições do usuário autenticado |
+| GET | `/predict/{id}` | Sim (Bearer JWT) | Retorna uma predição do usuário autenticado (`404` se não existir ou pertencer a outro usuário) |
 
 ## Segurança
 
 - Autenticação via JWT com `OAuth2PasswordBearer`.
-- Senha do usuário admin armazenada com hash `bcrypt` (nunca em texto puro).
+- Senhas dos usuários armazenadas com hash `bcrypt` (nunca em texto puro).
 - Chave de assinatura do token (`SECRET_KEY`) carregada de variável de ambiente (`.env`, fora do controle de versão) — nunca hardcoded no código-fonte.
-- A rota `/predict` exige token JWT válido; tentativas sem token ou com token expirado/inválido retornam `401 Unauthorized`.
+- Cada predição pertence a um `owner_id`; um usuário nunca lê predições de outro (acesso a predição alheia retorna `404`).
+- As rotas `/predict` exigem token JWT válido; tentativas sem token ou com token expirado/inválido retornam `401 Unauthorized`.
 - O diagrama de fluxo de dados (`others/dfd.png`) detalha as trust boundaries do sistema (internet pública ↔ borda, borda ↔ dispositivo, rotas públicas ↔ rotas autenticadas) e a análise de confidencialidade, integridade e disponibilidade por componente.
 
 ## Hospedagem
