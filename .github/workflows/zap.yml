@@ -1,0 +1,66 @@
+name: ZAP Passive Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  zap:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fastapi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: fastapi/requirements.txt
+
+      - name: Instalar dependências e criar banco
+        run: |
+          pip install -r requirements.txt
+          python sqlite_database.py
+
+      - name: Subir a API
+        env:
+          SECRET_KEY: ci-secret-key-descartavel-so-para-scan
+        run: |
+          nohup uvicorn main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/health && exit 0
+            sleep 1
+          done
+          echo "API não subiu"; cat uvicorn.log; exit 1
+
+      - name: ZAP API scan (passivo, -S = sem active scan)
+        run: |
+          mkdir -p zap-out && chmod 777 zap-out
+          docker run --rm --network host -v "$PWD/zap-out:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable zap-api-scan.py \
+            -t http://localhost:8000/openapi.json -f openapi \
+            -S -I -r zap_report.html -J zap_report.json
+
+      - name: Falhar se houver finding Medium ou High
+        run: |
+          python - <<'PY'
+          import json, sys
+          d = json.load(open("zap-out/zap_report.json"))
+          bad = [(a["riskdesc"], a["name"]) for s in d["site"] for a in s["alerts"] if int(a["riskcode"]) >= 2]
+          for b in bad:
+              print("::error::", *b)
+          print(f"Medium/High: {len(bad)}")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: Salvar relatório
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: fastapi/zap-out/
