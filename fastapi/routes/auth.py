@@ -15,7 +15,14 @@ from security.auth import (
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
-@router.post("/token", response_model=TokenResponse)
+@router.post(
+    "/token",
+    response_model=TokenResponse,
+    responses={
+        401: {"description": "Usuário ou senha incorretos"},
+        429: {"description": "Muitas tentativas de login. Tente novamente mais tarde."},
+    },
+)
 @limiter.limit(AUTH_RATE_LIMIT)  # anti brute force: 10 req/min por cliente
 def login(
     request: Request,  # exigido pelo SlowAPI

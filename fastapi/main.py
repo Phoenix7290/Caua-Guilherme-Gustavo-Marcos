@@ -1,18 +1,15 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
-
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from limiter import limiter
 from security.headers import install_docs, install_security_headers
-from routes.health import router as health_router
 from routes.auth import router as auth_router
 from routes.health import router as health_router
 from routes.predict import router as predict_router
-from security.headers import SecurityHeadersMiddleware
 
 app = FastAPI(
     title="Customer Support Intent API",
@@ -20,6 +17,14 @@ app = FastAPI(
     version="1.0.0",
     docs_url=None,   # /docs é servido por install_docs (CSP restritiva)
     redoc_url=None,  # ReDoc removido: exige CSP frouxa (unsafe-inline) e não é usado
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.state.limiter = limiter

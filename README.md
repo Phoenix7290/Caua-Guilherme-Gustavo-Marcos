@@ -50,8 +50,8 @@ A fonte, as principais características e o motivo da escolha do dataset estão 
 │       ├── auth.py                      # JWT, OAuth2PasswordBearer, autenticação via banco
 │       └── headers.py                   # headers de segurança HTTP via middleware (OWASP Top 10)
 ├── others/
-│   ├── dfd.png                          # diagrama de fluxo de dados
-│   └── dfd.dot                          # fonte do diagrama (Graphviz)
+│   ├── dfd.drawio.png                   # diagrama de fluxo de dados
+│   └── dfd.drawio                       # arquivo fonte do diagrama
 ├── .gitignore
 └── README.md
 ```
@@ -208,7 +208,7 @@ Fluxo:
 - **CORS com Allowlist Explícita**:
   - Configurado via `CORSMiddleware` sem uso de wildcard (`*`).
   - Origens explicitamente permitidas por padrão (`http://localhost`, `http://localhost:8000`, `http://localhost:3000`, `https://supportdesk-api.marcosryan.com`), customizáveis via variável `ALLOWED_ORIGINS` no `.env`.
-- **Diagrama de Fluxo de Dados**: localizado em `others/dfd.png`, mapeia trust boundaries (internet pública ↔ borda, borda ↔ host local, rotas públicas ↔ rotas autenticadas) e analisa controles de CIA (Confidencialidade, Integridade e Disponibilidade).
+- **Diagrama de Fluxo de Dados**: localizado em `others/dfd.drawio.png`, mapeia trust boundaries (internet pública ↔ borda, borda ↔ host local, rotas públicas ↔ rotas autenticadas) e analisa controles de CIA (Confidencialidade, Integridade e Disponibilidade).
 
 ## Hospedagem
 
