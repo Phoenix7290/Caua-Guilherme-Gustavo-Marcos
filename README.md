@@ -47,7 +47,8 @@ A fonte, as principais características e o motivo da escolha do dataset estão 
 │   │   ├── auth.py                      # POST /auth/token
 │   │   └── predict.py                   # POST /predict, GET /predict e GET /predict/{id} (protegidas)
 │   └── security/
-│       └── auth.py                      # JWT, OAuth2PasswordBearer, autenticação via banco
+│       ├── auth.py                      # JWT, OAuth2PasswordBearer, autenticação via banco
+│       └── headers.py                   # headers de segurança HTTP via middleware (OWASP Top 10)
 ├── others/
 │   ├── dfd.png                          # diagrama de fluxo de dados
 │   └── dfd.dot                          # fonte do diagrama (Graphviz)
@@ -107,18 +108,43 @@ Documentação interativa (Swagger): https://supportdesk-api.marcosryan.com/docs
 ### Testando
 
 ```bash
-# Health check
-curl https://supportdesk-api.marcosryan.com/health
+# 1. Health check e inspeção de Headers de Segurança HTTP
+curl -I https://supportdesk-api.marcosryan.com/health
 
-# Autenticação (retorna um token JWT válido por 15 minutos)
+# 2. Teste de CORS com preflight (origem autorizada na allowlist)
+curl -I -X OPTIONS https://supportdesk-api.marcosryan.com/predict \
+  -H "Origin: http://localhost:3000" \
+  -H "Access-Control-Request-Method: POST"
+
+# 3. Autenticação (usuários de exemplo: admin / admin123 e alice / alice123)
 curl -X POST https://supportdesk-api.marcosryan.com/auth/token \
   -d "username=admin&password=admin123"
 
-# Predição (substitua <TOKEN> pelo access_token retornado acima)
+# 4. Criar predição (substitua <TOKEN_ADMIN> pelo access_token retornado acima)
 curl -X POST https://supportdesk-api.marcosryan.com/predict \
-  -H "Authorization: Bearer <TOKEN>" \
+  -H "Authorization: Bearer <TOKEN_ADMIN>" \
   -H "Content-Type: application/json" \
   -d '{"text": "meu produto parou de funcionar"}'
+
+# 5. Listar predições do usuário autenticado (retorna apenas as predições do admin)
+curl https://supportdesk-api.marcosryan.com/predict \
+  -H "Authorization: Bearer <TOKEN_ADMIN>"
+
+# 6. Teste de BOLA (Broken Object Level Authorization):
+# Obtenha o token da Alice e tente acessar uma predição pertencente ao Admin (ex: id 1):
+curl -X POST https://supportdesk-api.marcosryan.com/auth/token \
+  -d "username=alice&password=alice123"
+
+# A requisição abaixo retorna 404 Not Found (BOLA mitigado):
+curl https://supportdesk-api.marcosryan.com/predict/1 \
+  -H "Authorization: Bearer <TOKEN_ALICE>"
+
+# 7. Teste de validação de schema (extra='forbid'):
+# Envio de atributo extra não previsto retorna 422 Unprocessable Entity:
+curl -X POST https://supportdesk-api.marcosryan.com/predict \
+  -H "Authorization: Bearer <TOKEN_ALICE>" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "quero reembolso", "campo_invalido": 123}'
 ```
 
 ## Self Hosting
@@ -164,12 +190,25 @@ Fluxo:
 
 ## Segurança
 
-- Autenticação via JWT com `OAuth2PasswordBearer`.
-- Senhas dos usuários armazenadas com hash `bcrypt` (nunca em texto puro).
-- Chave de assinatura do token (`SECRET_KEY`) carregada de variável de ambiente (`.env`, fora do controle de versão) — nunca hardcoded no código-fonte.
-- Cada predição pertence a um `owner_id`; um usuário nunca lê predições de outro (acesso a predição alheia retorna `404`).
-- As rotas `/predict` exigem token JWT válido; tentativas sem token ou com token expirado/inválido retornam `401 Unauthorized`.
-- O diagrama de fluxo de dados (`others/dfd.png`) detalha as trust boundaries do sistema (internet pública ↔ borda, borda ↔ dispositivo, rotas públicas ↔ rotas autenticadas) e a análise de confidencialidade, integridade e disponibilidade por componente.
+- **Autenticação via JWT com OAuth2PasswordBearer**: tokens assinados com algoritmo HS256 e expiração configurada.
+- **Armazenamento Seguro de Credenciais**: senhas dos usuários armazenadas exclusivamente como hash `bcrypt` (nunca em texto puro).
+- **Chave Secreta Protegida**: `SECRET_KEY` carregada via variáveis de ambiente (`.env`), sem exposição no código-fonte.
+- **Controle de Acesso por Ownership (Mitigação de BOLA / IDOR - OWASP API Top 10)**:
+  - Cada predição é associada ao `owner_id` (chave estrangeira para `user.id`).
+  - `GET /predict` retorna unicamente as predições de posse do usuário logado.
+  - `GET /predict/{id}` valida se o recurso pertence ao solicitante. Se pertencer a outro usuário ou não existir, retorna `404 Not Found` (evitando Broken Object Level Authorization e enumeração maliciosa de IDs).
+- **Validação Estrita de Schemas (`extra='forbid'`)**:
+  - `PredictRequest` configurado com `extra="forbid"` via Pydantic V2. Requisições contendo atributos adicionais não previstos são rejeitadas com status `422 Unprocessable Entity`.
+- **Headers HTTP de Segurança (OWASP Top 10)** via middleware FastAPI (`SecurityHeadersMiddleware`):
+  - `Strict-Transport-Security` (HSTS): `max-age=31536000; includeSubDomains` para impor uso de HTTPS.
+  - `X-Frame-Options`: `DENY` para mitigar ataques de Clickjacking.
+  - `X-Content-Type-Options`: `nosniff` impedindo MIME-type sniffing no navegador.
+  - `Content-Security-Policy` (CSP): restringe carregamento de recursos externos às origens estritas necessárias (com suporte aos assets do Swagger UI via CDN).
+  - Headers complementares: `X-XSS-Protection: 1; mode=block`, `Referrer-Policy: strict-origin-when-cross-origin` e `Permissions-Policy`.
+- **CORS com Allowlist Explícita**:
+  - Configurado via `CORSMiddleware` sem uso de wildcard (`*`).
+  - Origens explicitamente permitidas por padrão (`http://localhost`, `http://localhost:8000`, `http://localhost:3000`, `https://supportdesk-api.marcosryan.com`), customizáveis via variável `ALLOWED_ORIGINS` no `.env`.
+- **Diagrama de Fluxo de Dados**: localizado em `others/dfd.png`, mapeia trust boundaries (internet pública ↔ borda, borda ↔ host local, rotas públicas ↔ rotas autenticadas) e analisa controles de CIA (Confidencialidade, Integridade e Disponibilidade).
 
 ## Hospedagem
 
