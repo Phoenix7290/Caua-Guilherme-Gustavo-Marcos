@@ -1,51 +1,53 @@
-"""Middleware de segurança HTTP para aplicação de cabeçalhos OWASP Top 10."""
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
-from fastapi import Request, Response
+import base64
+import hashlib
+import re
+
+from fastapi import FastAPI
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse
+
+# CSP padrão para as respostas JSON da API: nada pode ser carregado/embutido.
+API_CSP = "default-src 'none'; frame-ancestors 'none'"
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",  # anti-clickjacking
+    "Referrer-Policy": "no-referrer",
+}
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """
-    Middleware para injeção de headers HTTP de segurança (OWASP Top 10):
-    - Strict-Transport-Security (HSTS): força uso estrito de conexões HTTPS.
-    - X-Frame-Options: mitiga ataques de Clickjacking impedindo que a aplicação seja renderizada em frames/iframes.
-    - X-Content-Type-Options: mitiga MIME-sniffing forçando o navegador a respeitar o Content-Type declarado.
-    - Content-Security-Policy (CSP): mitiga Cross-Site Scripting (XSS) e injeção de dados definindo origens confiáveis.
-    - X-XSS-Protection: proteção legada para bloqueio de XSS refletido em navegadores compatíveis.
-    - Referrer-Policy: controla quais informações de referência são enviadas ao navegar para outros domínios.
-    - Permissions-Policy: restringe acesso a APIs sensíveis do navegador (câmera, microfone, geolocalização).
-    """
+def _sha256(content: str) -> str:
+    return "'sha256-" + base64.b64encode(hashlib.sha256(content.encode()).digest()).decode() + "'"
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        response: Response = await call_next(request)
 
-        # HSTS (Strict-Transport-Security)
-        response.headers["Strict-Transport-Security"] = (
-            "max-age=31536000; includeSubDomains"
-        )
-
-        # Anti-Clickjacking
-        response.headers["X-Frame-Options"] = "DENY"
-
-        # Anti-MIME-Sniffing
-        response.headers["X-Content-Type-Options"] = "nosniff"
-
-        # Content-Security-Policy (CSP) - permite Swagger UI (/docs) via cdn.jsdelivr.net
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-            "img-src 'self' data: https://fastapi.tiangolo.com; "
-            "frame-ancestors 'none'; "
-            "object-src 'none'; "
-            "base-uri 'self'"
-        )
-
-        # Headers adicionais de hardening
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = (
-            "geolocation=(), camera=(), microphone=()"
-        )
-
+def install_security_headers(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def add_security_headers(request, call_next):
+        response = await call_next(request)
+        for k, v in SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        response.headers.setdefault("Content-Security-Policy", API_CSP)
         return response
+
+
+def install_docs(app: FastAPI) -> None:
+    html = get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title=f"{app.title} - Swagger UI",
+        oauth2_redirect_url=None,
+    ).body.decode()
+    inline = re.search(r"<script>(.*?)</script>", html, re.S).group(1)
+    csp = "; ".join([
+        "default-src 'none'",
+        f"script-src {_sha256(inline)} https://cdn.jsdelivr.net",
+        "style-src https://cdn.jsdelivr.net",
+        "img-src 'self' data: https://fastapi.tiangolo.com",
+        "connect-src 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+        "form-action 'none'",
+    ])
+
+    @app.get("/docs", include_in_schema=False)
+    def swagger_docs():
+        return HTMLResponse(html, headers={"Content-Security-Policy": csp})
