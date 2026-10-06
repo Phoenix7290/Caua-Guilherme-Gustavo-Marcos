@@ -16,7 +16,9 @@ from models.tables import User
 load_dotenv()
 
 # ── Configurações ────────────────────────────────────────────────────────
-SECRET_KEY = os.getenv("SECRET_KEY", "chave-fallback-so-para-dev-local")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("A variável de ambiente SECRET_KEY não está definida.")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 

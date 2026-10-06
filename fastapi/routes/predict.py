@@ -30,7 +30,14 @@ def _classify(text: str):
     return "Product Inquiry", 0.60
 
 
-@router.post("", response_model=PredictResponse)
+@router.post(
+    "",
+    response_model=PredictResponse,
+    responses={
+        401: {"description": "Não autenticado"},
+        422: {"description": "Erro de validação (ex: campos não permitidos no corpo)"},
+    },
+)
 def predict(
     body: PredictRequest,
     current_user: User = Depends(get_current_user),
@@ -58,7 +65,11 @@ def predict(
     )
 
 
-@router.get("", response_model=list[PredictionRead])
+@router.get(
+    "",
+    response_model=list[PredictionRead],
+    responses={401: {"description": "Não autenticado"}},
+)
 def list_predictions(
     current_user: User = Depends(get_current_user),
     session: Session = Depends(get_session),
@@ -67,7 +78,14 @@ def list_predictions(
     return session.exec(select(Prediction).where(Prediction.owner_id == current_user.id)).all()
 
 
-@router.get("/{prediction_id}", response_model=PredictionRead)
+@router.get(
+    "/{prediction_id}",
+    response_model=PredictionRead,
+    responses={
+        401: {"description": "Não autenticado"},
+        404: {"description": "Predição não encontrada (ID inexistente ou pertence a outro usuário)"},
+    },
+)
 def get_prediction(
     prediction_id: int,
     current_user: User = Depends(get_current_user),
