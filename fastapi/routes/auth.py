@@ -1,10 +1,11 @@
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import Session
 
 from database import get_session
+from limiter import AUTH_RATE_LIMIT, limiter
 from models.schemas import TokenResponse
 from security.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -15,11 +16,12 @@ from security.auth import (
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 @router.post("/token", response_model=TokenResponse)
+@limiter.limit(AUTH_RATE_LIMIT)  # anti brute force: 10 req/min por cliente
 def login(
+    request: Request,  # exigido pelo SlowAPI
     form_data: OAuth2PasswordRequestForm = Depends(),
     session: Session = Depends(get_session),
 ):
-    """Autentica o usuário (tabela user) e retorna um token JWT."""
     if not authenticate_user(session, form_data.username, form_data.password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
